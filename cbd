@@ -1,0 +1,93 @@
+✅ Step 1: TF-IDF Keyword Extraction for Existing Clusters
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from collections import defaultdict
+
+# Group texts by cluster
+cluster_texts = defaultdict(list)
+for _, row in df.iterrows():
+    cluster_texts[row['cluster_id']].append(row['combined_text'])
+
+# Extract TF-IDF terms for each cluster
+cluster_keywords = {}
+
+for cluster_id, texts in cluster_texts.items():
+    vectorizer = TfidfVectorizer(max_df=0.8, min_df=2, ngram_range=(1, 2), stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(texts)
+    summed_tfidf = tfidf_matrix.sum(axis=0).A1
+    terms = vectorizer.get_feature_names_out()
+    top_indices = summed_tfidf.argsort()[-10:][::-1]
+    top_keywords = [terms[i] for i in top_indices]
+    cluster_keywords[cluster_id] = top_keywords
+
+✅ Step 2: Build FAISS Index with Cluster Centroids
+import numpy as np
+import faiss
+
+# Assuming `embeddings` is a NumPy array aligned with `df`
+df['embedding'] = list(embeddings)
+
+# Compute centroids per cluster
+cluster_centroids = {}
+for cluster_id in df['cluster_id'].unique():
+    cluster_vectors = np.stack(df[df['cluster_id'] == cluster_id]['embedding'].to_list())
+    centroid = np.mean(cluster_vectors, axis=0)
+    cluster_centroids[cluster_id] = centroid
+
+# Build FAISS index
+embedding_dim = next(iter(cluster_centroids.values())).shape[0]
+index = faiss.IndexFlatL2(embedding_dim)
+
+cluster_id_list = list(cluster_centroids.keys())
+centroid_matrix = np.stack([cluster_centroids[cid] for cid in cluster_id_list])
+index.add(centroid_matrix)
+
+
+✅ Step 3: Assign New Incident to Nearest Cluster
+
+from sentence_transformers import SentenceTransformer
+
+# Load MiniLM model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def assign_cluster(text):
+    vector = model.encode([text])
+    _, I = index.search(vector, k=1)
+    cluster_id = cluster_id_list[I[0][0]]
+    return cluster_id
+
+
+
+✅ Step 4: Add New Incident to Cluster and Update TF-IDF Terms
+# Assign to nearest cluster
+assigned_cluster = assign_cluster(new_text)
+
+# Add new incident to that cluster’s TF-IDF corpus
+cluster_texts[assigned_cluster].append(new_text)
+
+# Recalculate top terms (optional, after every N updates)
+def update_cluster_keywords(cluster_id):
+    texts = cluster_texts[cluster_id]
+    vectorizer = TfidfVectorizer(max_df=0.8, min_df=2, ngram_range=(1, 2), stop_words='english')
+    tfidf_matrix = vectorizer.fit_transform(texts)
+    summed_tfidf = tfidf_matrix.sum(axis=0).A1
+    terms = vectorizer.get_feature_names_out()
+    top_indices = summed_tfidf.argsort()[-10:][::-1]
+    return [terms[i] for i in top_indices]
+
+# Example update
+cluster_keywords[assigned_cluster] = update_cluster_keywords(assigned_cluster)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
